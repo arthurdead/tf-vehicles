@@ -322,6 +322,22 @@ void CreateVehicle(int client, VehicleConfig config)
 			AcceptEntityInput(vehicle, "HandBrakeOn");
 			
 			TeleportEntityToClientViewPos(vehicle, client, MASK_SOLID | MASK_WATER);
+			
+			int npc = CreateEntityByName("npc_vehicledriver");
+			if (npc != -1)
+			{
+				DispatchKeyValue(npc, "vehicle", targetname);
+				DispatchKeyValue(npc, "drivermaxspeed", "10000");
+				
+				if (DispatchSpawn(npc))
+				{
+					ActivateEntity(npc);
+					SetVariantString("!activator");
+					AcceptEntityInput(npc, "SetParent", vehicle);
+					
+					Vehicle(vehicle).NPC = EntIndexToEntRef(npc);
+				}
+			}
 		}
 	}
 }
@@ -614,6 +630,53 @@ public Action Client_OnTakeDamage(int victim, int &attacker, int &inflictor, flo
 
 public void PropVehicleDriveable_Think(int vehicle)
 {
+	if (Vehicle(vehicle).NPC != INVALID_ENT_REFERENCE)
+	{
+		SDKCall_ClearWaypoints(Vehicle(vehicle).NPC);
+		
+		float vehicleOrigin[3], clientOrigin[3];
+		GetEntPropVector(vehicle, Prop_Data, "m_vecAbsOrigin", vehicleOrigin);
+		
+		int nearestClient;
+		float distance;
+		for (int client = 1; client <= MaxClients; client++)
+		{
+			if (IsClientInGame(client) && IsPlayerAlive(client))
+			{
+				GetClientAbsOrigin(client, clientOrigin);
+				
+				float newDistance = GetVectorDistance(vehicleOrigin, clientOrigin);
+				if (newDistance != 0.0 && (distance == 0.0 || newDistance < distance))
+				{
+					LogMessage("Found new client %d with distance %f", client, distance);
+					nearestClient = client;
+					distance = newDistance;
+				}
+			}
+		}
+		
+		if (!IsValidEntity(nearestClient))
+			return;
+		
+		//ClearWaypoints resets m_vecDesiredPosition, which makes the car brake. Prevent this.
+		int clientVehicle = GetEntPropEnt(nearestClient, Prop_Data, "m_hVehicle");
+		float origin[3];
+		if (clientVehicle == -1)
+		{
+			origin = clientOrigin;
+			SetEntPropEnt(Vehicle(vehicle).NPC, Prop_Data, "m_hGoalEnt", nearestClient);
+		}
+		else
+		{
+			GetEntPropVector(clientVehicle, Prop_Data, "m_vecAbsOrigin", origin);
+			SetEntPropEnt(Vehicle(vehicle).NPC, Prop_Data, "m_hGoalEnt", clientVehicle);
+		}
+		
+		SetEntPropVector(Vehicle(vehicle).NPC, Prop_Data, "m_vecDesiredPosition", origin);
+		
+		AcceptEntityInput(Vehicle(vehicle).NPC, "StartForward");
+	}
+	
 	int sequence = GetEntProp(vehicle, Prop_Data, "m_nSequence");
 	bool sequenceFinished = view_as<bool>(GetEntProp(vehicle, Prop_Data, "m_bSequenceFinished"));
 	bool enterAnimOn = view_as<bool>(GetEntProp(vehicle, Prop_Data, "m_bEnterAnimOn"));
@@ -970,6 +1033,18 @@ Handle PrepSDKCall_GetAttachmentLocal(GameData gamedata)
 	return call;
 }
 
+Handle PrepSDKCall_ClearWaypoints(GameData gamedata)
+{
+	StartPrepSDKCall(SDKCall_Entity);
+	PrepSDKCall_SetFromConf(gamedata, SDKConf_Signature, "CNPC_VehicleDriver::ClearWaypoints");
+	
+	Handle call = EndPrepSDKCall();
+	if (call == null)
+		LogMessage("Failed to create SDKCall: CNPC_VehicleDriver::ClearWaypointse");
+	
+	return call;
+}
+
 Handle PrepSDKCall_GetVehicleEnt(GameData gamedata)
 {
 	StartPrepSDKCall(SDKCall_Raw);
@@ -1044,6 +1119,12 @@ bool SDKCall_GetAttachmentLocal(int entity, const char[] name, float origin[3], 
 		return SDKCall(g_SDKCallGetAttachmentLocal, entity, name, origin, angles);
 	
 	return false;
+}
+
+void SDKCall_ClearWaypoints(int npc)
+{
+	if (g_SDKCallClearWaypoints != null)
+		SDKCall(g_SDKCallClearWaypoints, npc);
 }
 
 int SDKCall_GetVehicleEnt(Address serverVehicle)

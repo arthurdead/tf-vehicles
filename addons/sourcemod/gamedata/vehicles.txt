@@ -19,6 +19,11 @@
 				"linux"		"@_ZN14CBaseAnimating18GetAttachmentLocalEPKcR6VectorR6QAngle"
 				"windows"	""	//FIXME: This function is inlined on Windows
 			}
+			"CNPC_VehicleDriver::ClearWaypoints"
+			{
+				"linux"		"@_ZN18CNPC_VehicleDriver14ClearWaypointsEv"
+				"windows"	"\xF3\x0F\x10\x05\x2A\x2A\x2A\x2A\x56\x8B\xF1\xF3\x0F\x11\x86\xE0\x0D\x00\x00"
+			}
 		}
 		"Offsets"
 		{
