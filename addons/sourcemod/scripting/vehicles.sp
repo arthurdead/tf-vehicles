@@ -114,7 +114,6 @@ DynamicHook g_DHookIsPassengerVisible;
 Handle g_SDKCallVehicleSetupMove;
 Handle g_SDKCallCanEnterVehicle;
 Handle g_SDKCallGetAttachmentLocal;
-Handle g_SDKCallClearWaypoints;
 Handle g_SDKCallGetVehicleEnt;
 Handle g_SDKCallHandleEntryExitFinish;
 Handle g_SDKCallStudioFrameAdvance;
@@ -220,7 +219,6 @@ public void OnPluginStart()
 	g_SDKCallVehicleSetupMove = PrepSDKCall_VehicleSetupMove(gamedata);
 	g_SDKCallCanEnterVehicle = PrepSDKCall_CanEnterVehicle(gamedata);
 	g_SDKCallGetAttachmentLocal = PrepSDKCall_GetAttachmentLocal(gamedata);
-	g_SDKCallClearWaypoints = PrepSDKCall_ClearWaypoints(gamedata);
 	g_SDKCallGetVehicleEnt = PrepSDKCall_GetVehicleEnt(gamedata);
 	g_SDKCallHandleEntryExitFinish = PrepSDKCall_HandleEntryExitFinish(gamedata);
 	g_SDKCallStudioFrameAdvance = PrepSDKCall_StudioFrameAdvance(gamedata);

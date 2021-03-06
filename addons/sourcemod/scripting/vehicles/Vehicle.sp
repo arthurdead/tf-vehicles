@@ -40,17 +40,17 @@ methodmap Vehicle
 		return view_as<Vehicle>(entity);
 	}
 	
-	property int Passenger
+	property ArrayList Passengers
 	{
 		public get()
 		{
 			int index = g_VehicleProperties.FindValue(view_as<int>(this), VehicleProperties::entity);
-			return g_VehicleProperties.Get(index, VehicleProperties::npc);
+			return g_VehicleProperties.Get(index, VehicleProperties::passengers);
 		}
-		public set(int value)
+		public set(ArrayList value)
 		{
 			int index = g_VehicleProperties.FindValue(view_as<int>(this), VehicleProperties::entity);
-			g_VehicleProperties.Set(index, value, VehicleProperties::npc);
+			g_VehicleProperties.Set(index, value, VehicleProperties::passengers);
 		}
 	}
 	
