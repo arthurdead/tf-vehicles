@@ -21,6 +21,8 @@
 
 #undef REQUIRE_EXTENSIONS
 #tryinclude <loadsoundscript>
+#tryinclude <animhelpers>
+#tryinclude <datamaps>
 #define REQUIRE_EXTENSIONS
 
 #pragma semicolon 1
@@ -124,6 +126,14 @@ char g_OldTurboPhysics[8];
 
 bool g_ClientInUse[MAXPLAYERS + 1];
 
+#if defined animhelpers_included
+bool g_bAnimHelpers = false;
+#if defined datamaps_included
+bool g_bDataMaps = false;
+CustomDatamap g_VehicleDatamap = null;
+#endif
+#endif
+
 public Plugin myinfo = 
 {
 	name = "Driveable Vehicles for Team Fortress 2", 
@@ -146,13 +156,35 @@ public void OnPluginStart()
 	LoadTranslations("vehicles.phrases");
 	
 	//Load common vehicle sounds
-	if (LibraryExists("LoadSoundscript"))
+	if (LibraryExists("LoadSoundscript")) {
 #if defined _loadsoundscript_included
 		LoadSoundScript("scripts/game_sounds_vehicles.txt");
+#else
+		LogMessage("LoadSoundscript extension was found but plugin was compiled without support for it, vehicles won't have sounds.");
 #endif
-	else
+	} else
 		LogMessage("LoadSoundScript extension could not be found, vehicles won't have sounds.");
-	
+
+	if (LibraryExists("animhelpers")) {
+#if defined animhelpers_included
+		g_bAnimHelpers = true;
+#else
+		LogMessage("animhelpers extension was found but plugin was compiled without support for it.");
+#endif
+	} else
+		LogMessage("animhelpers extension could not be found.");
+
+#if defined animhelpers_included
+	if (LibraryExists("datamaps")) {
+	#if defined datamaps_included
+		g_bDataMaps = true;
+	#else
+		LogMessage("datamaps extension was found but plugin was compiled without support for it.");
+	#endif
+	} else
+		LogMessage("datamaps extension could not be found.");
+#endif
+
 	//Create plugin convars
 	tf_vehicle_lock_speed = CreateConVar("tf_vehicle_lock_speed", "10.0", "Vehicle must be going slower than this for player to enter or exit, in in/sec", _, true, 0.0);
 	tf_vehicle_physics_damage_modifier = CreateConVar("tf_vehicle_physics_damage_modifier", "1.0", "Modifier of impact-based physics damage against other players", _, true, 0.0);
@@ -214,13 +246,34 @@ public void OnPluginStart()
 	
 	g_SDKCallVehicleSetupMove = PrepSDKCall_VehicleSetupMove(gamedata);
 	g_SDKCallCanEnterVehicle = PrepSDKCall_CanEnterVehicle(gamedata);
-	g_SDKCallGetAttachmentLocal = PrepSDKCall_GetAttachmentLocal(gamedata);
 	g_SDKCallGetVehicleEnt = PrepSDKCall_GetVehicleEnt(gamedata);
 	g_SDKCallHandleEntryExitFinish = PrepSDKCall_HandleEntryExitFinish(gamedata);
-	g_SDKCallStudioFrameAdvance = PrepSDKCall_StudioFrameAdvance(gamedata);
 	g_SDKCallGetInVehicle = PrepSDKCall_GetInVehicle(gamedata);
+
+#if defined animhelpers_included
+	if(!g_bAnimHelpers) {
+#endif
+		g_SDKCallGetAttachmentLocal = PrepSDKCall_GetAttachmentLocal(gamedata);
+		g_SDKCallStudioFrameAdvance = PrepSDKCall_StudioFrameAdvance(gamedata);
+#if defined animhelpers_included
+	}
+#endif
 	
 	delete gamedata;
+
+#if defined animhelpers_included && defined datamaps_included
+	if(g_bAnimHelpers && g_bDataMaps) {
+		g_VehicleDatamap = CustomDatamap.from_classname(VEHICLE_CLASSNAME);
+		g_VehicleDatamap.add_prop("m_nDriverEyes", custom_prop_int);
+		g_VehicleDatamap.add_prop("m_nMuzzle", custom_prop_int);
+		g_VehicleDatamap.add_prop("m_nGunRef", custom_prop_int);
+		g_VehicleDatamap.add_prop("m_nWeaponYaw", custom_prop_int);
+		g_VehicleDatamap.add_prop("m_nWeaponPitch", custom_prop_int);
+		g_VehicleDatamap.add_prop("m_nGunSpin", custom_prop_int);
+		g_VehicleDatamap.add_prop("m_aimYaw", custom_prop_float);
+		g_VehicleDatamap.add_prop("m_aimPitch", custom_prop_float);
+	}
+#endif
 }
 
 public void OnPluginEnd()
@@ -307,6 +360,7 @@ void CreateVehicle(int client, Vehicle config)
 		DispatchKeyValue(vehicle, "spawnflags", "1");	//SF_PROP_VEHICLE_ALWAYSTHINK
 		SetEntProp(vehicle, Prop_Data, "m_nSkin", config.skin);
 		SetEntProp(vehicle, Prop_Data, "m_nVehicleType", config.type);
+		SetEntProp(vehicle, Prop_Send, "m_bHasGun", 0);
 		
 		if (DispatchSpawn(vehicle))
 		{
@@ -464,7 +518,7 @@ public Action Timer_ShowVehicleKeyHint(Handle timer, int vehicleRef)
 		if (client != -1)
 		{
 			//Show different key hints based on vehicle type
-			switch (GetEntProp(vehicle, Prop_Data, "m_nVehicleType"))
+			switch (view_as<VehicleType>(GetEntProp(vehicle, Prop_Data, "m_nVehicleType")))
 			{
 				case VEHICLE_TYPE_CAR_WHEELS, VEHICLE_TYPE_CAR_RAYCAST:
 				{
@@ -603,6 +657,62 @@ public Action Client_OnTakeDamage(int victim, int &attacker, int &inflictor, flo
 	return Plugin_Continue;
 }
 
+public bool TraceEntityFilter_DontHitVehicleOrDriver(int entity, int mask, any data)
+{
+	int vehicle = GetEntPropEnt(data, Prop_Send, "m_hVehicle");
+	return entity != data && entity != vehicle;
+}
+
+bool IsVehicleOverturned(int vehicle)
+{
+	float angles[3];
+	GetEntPropVector(vehicle, Prop_Data, "m_angAbsRotation", angles);
+
+	float vehicleup[3];
+	GetAngleVectors(angles, NULL_VECTOR, NULL_VECTOR, vehicleup);
+
+	static const float up[3] = {0.0, 0.0, 1.0};
+	if(GetVectorDotProduct(up, vehicleup) < 0.0) {
+		return true;
+	}
+
+	return false;
+}
+
+#if defined animhelpers_included
+void SetCachedPoseParam(int vehicle, const char[] paramname, const char[] propname, float value)
+{
+	if(!g_bAnimHelpers) {
+		return;
+	}
+
+#if defined datamaps_included
+	if(g_bDataMaps) {
+		int index = GetEntProp(vehicle, Prop_Data, propname);
+		if(index != -1) {
+			view_as<BaseAnimating>(vehicle).SetPoseParameterEx(index, value);
+		}
+	} else
+#endif
+		view_as<BaseAnimating>(vehicle).SetPoseParameter(paramname, value);
+}
+
+void SetVehicleWeaponPitch(int vehicle, float value)
+{
+	SetCachedPoseParam(vehicle, "vehicle_weapon_pitch", "m_nWeaponPitch", value);
+}
+
+void SetVehicleWeaponYaw(int vehicle, float value)
+{
+	SetCachedPoseParam(vehicle, "vehicle_weapon_yaw", "m_nWeaponYaw", value);
+}
+
+void SetVehicleGunSpin(int vehicle, float value)
+{
+	SetCachedPoseParam(vehicle, "gun_spin", "m_nGunSpin", value);
+}
+#endif
+
 public void PropVehicleDriveable_Think(int vehicle)
 {
 	int sequence = GetEntProp(vehicle, Prop_Data, "m_nSequence");
@@ -611,8 +721,8 @@ public void PropVehicleDriveable_Think(int vehicle)
 	bool exitAnimOn = view_as<bool>(GetEntProp(vehicle, Prop_Data, "m_bExitAnimOn"));
 	
 	if (sequence != 0)
-		SDKCall_StudioFrameAdvance(vehicle);
-	
+		CallStudioFrameAdvance(vehicle);
+
 	if ((sequence == 0 || sequenceFinished) && (enterAnimOn || exitAnimOn))
 	{
 		if (enterAnimOn)
@@ -623,6 +733,57 @@ public void PropVehicleDriveable_Think(int vehicle)
 		}
 		
 		SDKCall_HandleEntryExitFinish(GetServerVehicle(vehicle), exitAnimOn, true);
+	}
+
+	bool hasGun = view_as<bool>(GetEntProp(vehicle, Prop_Send, "m_bHasGun"));
+	bool engineLocked = view_as<bool>(GetEntProp(vehicle, Prop_Data, "m_bEngineLocked"));
+
+	if(IsVehicleOverturned(vehicle) || engineLocked || !hasGun) {
+	#if defined animhelpers_included
+		if(g_bAnimHelpers) {
+			SetVehicleGunSpin(vehicle, 0.0);
+			SetVehicleWeaponYaw(vehicle, 0.0);
+			SetVehicleWeaponPitch(vehicle, 0.0);
+		}
+	#endif
+		return;
+	}
+
+	int driver = GetEntPropEnt(vehicle, Prop_Send, "m_hPlayer");
+
+	if ((hasGun && !exitAnimOn && !enterAnimOn) && (0 < driver <= MaxClients))
+	{
+		float angles[3];
+		float posStart[3];
+
+	#if defined animhelpers_included
+		if(g_bAnimHelpers) {
+			BaseAnimating anim = BaseAnimating(vehicle);
+
+		#if defined datamaps_included
+			if(g_bDataMaps) {
+				int m_nMuzzle = GetEntProp(vehicle, Prop_Data, "m_nMuzzle");
+				if(m_nMuzzle != -1) {
+					anim.GetAttachmentEx(m_nMuzzle, posStart, angles);
+				}
+			} else
+		#endif
+			{
+				anim.GetAttachment("Muzzle", posStart, angles);
+			}
+		} else
+	#endif
+		{
+			GetClientEyeAngles(driver, angles);
+			GetClientEyePosition(driver, posStart);
+		}
+
+		Handle trace = TR_TraceRayFilterEx(posStart, angles, MASK_SOLID, RayType_Infinite, TraceEntityFilter_DontHitVehicleOrDriver, driver);
+		float posEnd[3];
+		TR_GetEndPosition(posEnd, trace);
+		delete trace;
+
+		SetEntPropVector(vehicle, Prop_Send, "m_vecGunCrosshair", posEnd);
 	}
 }
 
@@ -661,6 +822,18 @@ public void PropVehicleDriveable_SpawnPost(int vehicle)
 	DHookVehicle(GetServerVehicle(vehicle));
 	
 	SetEntPropFloat(vehicle, Prop_Data, "m_flMinimumSpeedToEnterExit", tf_vehicle_lock_speed.FloatValue);
+
+#if defined animhelpers_included && defined datamaps_included
+	if(g_bAnimHelpers && g_bDataMaps) {
+		BaseAnimating anim = BaseAnimating(vehicle);
+		SetEntProp(vehicle, Prop_Data, "m_nDriverEyes", anim.LookupAttachment("vehicle_driver_eyes"));
+		SetEntProp(vehicle, Prop_Data, "m_nMuzzle", anim.LookupAttachment("Muzzle"));
+		SetEntProp(vehicle, Prop_Data, "m_nGunRef", anim.LookupAttachment("gun_ref"));
+		SetEntProp(vehicle, Prop_Data, "m_nWeaponYaw", anim.LookupPoseParameter("vehicle_weapon_yaw"));
+		SetEntProp(vehicle, Prop_Data, "m_nWeaponPitch", anim.LookupPoseParameter("vehicle_weapon_pitch"));
+		SetEntProp(vehicle, Prop_Data, "m_nGunSpin", anim.LookupPoseParameter("gun_spin"));
+	}
+#endif
 }
 
 public Action PropVehicleDriveable_Use(int vehicle, int activator, int caller, UseType type, float value)
@@ -881,8 +1054,8 @@ public MRESReturn DHookCallback_HandlePassengerEntryPre(Address serverVehicle, D
 				SDKCall_GetInVehicle(client, serverVehicle, VEHICLE_ROLE_DRIVER);
 				
 				//Snap the driver's view where the vehicle is facing
-				float origin[3], angles[3];
-				if (SDKCall_GetAttachmentLocal(vehicle, "vehicle_driver_eyes", origin, angles))
+				float angles[3];
+				if (GetVehicleDriverEyeAngles(vehicle, angles))
 					TeleportEntity(client, NULL_VECTOR, angles, NULL_VECTOR);
 			}
 		}
@@ -1029,11 +1202,34 @@ bool SDKCall_CanEnterVehicle(int client, Address serverVehicle, PassengerRole ro
 	return false;
 }
 
+bool GetVehicleDriverEyeAngles(int vehicle, float angles[3])
+{
+#if defined animhelpers_included
+	if(g_bAnimHelpers) {
+		#if defined datamaps_included
+		if(g_bDataMaps) {
+			int m_nDriverEyes = GetEntProp(vehicle, Prop_Data, "m_nDriverEyes");
+			if(m_nDriverEyes != -1) {
+				return view_as<BaseAnimating>(vehicle).GetAttachmentLocalEx(m_nDriverEyes, NULL_VECTOR, angles);
+			} else {
+				return false;
+			}
+		} else
+		#endif
+			return view_as<BaseAnimating>(vehicle).GetAttachmentLocal("vehicle_driver_eyes", NULL_VECTOR, angles);
+	} else
+#endif
+	{
+		float origin[3];
+		return SDKCall_GetAttachmentLocal(vehicle, "vehicle_driver_eyes", origin, angles);
+	}
+}
+
 bool SDKCall_GetAttachmentLocal(int entity, const char[] name, float origin[3], float angles[3])
 {
 	if (g_SDKCallGetAttachmentLocal != null)
 		return SDKCall(g_SDKCallGetAttachmentLocal, entity, name, origin, angles);
-	
+
 	return false;
 }
 
@@ -1049,6 +1245,18 @@ void SDKCall_HandleEntryExitFinish(Address serverVehicle, bool exitAnimOn, bool 
 {
 	if (g_SDKCallHandleEntryExitFinish != null)
 		SDKCall(g_SDKCallHandleEntryExitFinish, serverVehicle, exitAnimOn, resetAnim);
+}
+
+void CallStudioFrameAdvance(int entity)
+{
+#if defined animhelpers_included
+	if(g_bAnimHelpers) {
+		view_as<BaseAnimating>(entity).StudioFrameAdvance();
+	} else
+#endif
+	{
+		SDKCall_StudioFrameAdvance(entity);
+	}
 }
 
 void SDKCall_StudioFrameAdvance(int entity)
